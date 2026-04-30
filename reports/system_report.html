@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Causal Portfolio Selector - Sistem Raporu</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #c65a00;
+      --strong: #f97316;
+      --soft: #fff4e8;
+      --line: #f4a261;
+      --muted: #d97706;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.6;
+    }
+
+    main {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 36px 0 64px;
+    }
+
+    h1, h2, h3 {
+      color: var(--strong);
+      line-height: 1.2;
+      margin: 0 0 14px;
+    }
+
+    h1 {
+      font-size: 34px;
+      margin-bottom: 8px;
+    }
+
+    h2 {
+      font-size: 24px;
+      padding-top: 28px;
+      border-top: 2px solid var(--line);
+      margin-top: 34px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin-top: 20px;
+    }
+
+    p {
+      margin: 8px 0 14px;
+    }
+
+    code {
+      color: var(--strong);
+      background: var(--soft);
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    .hero {
+      border: 2px solid var(--line);
+      background: var(--soft);
+      padding: 22px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+    }
+
+    .headline {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--strong);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 18px 0;
+    }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #ffffff;
+    }
+
+    .box strong {
+      display: block;
+      color: var(--strong);
+      font-size: 22px;
+      margin-bottom: 3px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 24px;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: var(--soft);
+      color: var(--strong);
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: #fffaf5;
+    }
+
+    ul {
+      margin-top: 8px;
+      padding-left: 22px;
+    }
+
+    .note {
+      border-left: 4px solid var(--strong);
+      padding: 10px 14px;
+      background: var(--soft);
+      margin: 16px 0;
+      color: var(--muted);
+    }
+
+    .small {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .decision {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--strong);
+    }
+
+    @media (max-width: 820px) {
+      main {
+        width: min(100% - 28px, 1180px);
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h1>Causal Portfolio Selector - Sistem Raporu</h1>
+    <p class="headline">Amaç: Yeni bir discrete observational dataset geldiğinde en iyi 3 causal discovery algoritmasını önermek.</p>
+    <p>
+      Bu repo, eski <code>Causal-Algorithm-Selection</code> pipeline'ından bağımsız bir sistemdir.
+      Eski pipeline sadece hazır dataset ve daha önce koşulmuş algoritma çıktıları için kaynak olarak kullanıldı.
+      Yeni repo kendi feature extraction, model training, evaluation ve raporlama koduna sahiptir.
+    </p>
+    <p class="decision">
+      Şu anki net sonuç: en güçlü pratik politika learned selector değil, sabit Top-3 portföydür:
+      <code>PC_discrete</code>, <code>HC</code>, <code>K2</code>.
+    </p>
+  </section>
+
+  <section>
+    <h2>1. Kısa Özet</h2>
+    <div class="grid">
+      <div class="box">
+        <strong>16</strong>
+        Dataset import edildi: 15 exact BN + 1 real reference.
+      </div>
+      <div class="box">
+        <strong>9</strong>
+        Toplam algoritma havuzu: 6 hazır + 3 yeni koşulan.
+      </div>
+      <div class="box">
+        <strong>0.80</strong>
+        Phase 3 timeout-aware en iyi sabit portföy Top-3 hit.
+      </div>
+    </div>
+    <p>
+      İlk 6 algoritmanın sonuçları zaten hazırdı:
+      <code>PC_discrete</code>, <code>FCI</code>, <code>GES</code>, <code>HC</code>, <code>Tabu</code>, <code>K2</code>.
+      Sonradan 3 eksik algoritma kontrollü timeout ile eklendi:
+      <code>MMHC</code>, <code>BOSS</code>, <code>GRaSP</code>.
+    </p>
+    <p>
+      Büyük datasetlerde yeni 3 algoritmanın çoğu timeout verdiği için final değerlendirme iki ayrı şekilde yapıldı:
+      <strong>timeout-aware</strong> değerlendirme ve sadece tam 9 algoritma coverage olan küçük dataset değerlendirmesi.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. Sistem Ne Yapıyor?</h2>
+    <p>
+      Sistem bir causal discovery algoritmasını doğrudan çalıştırıp graph üretmek yerine,
+      datasetin istatistiksel ve yapısal özelliklerinden hangi algoritmaların iyi çalışacağını tahmin etmeye çalışır.
+      Bu SATzilla tarzı bir algorithm selection yaklaşımıdır.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Aşama</th>
+          <th>Ne Yapıldı?</th>
+          <th>Çıktı</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Phase 1</td>
+          <td>Handcrafted dataset meta-feature'ları çıkarıldı ve 6 algoritma üzerinde selector eğitildi.</td>
+          <td>Baseline, ablation ve LODO sonuçları.</td>
+        </tr>
+        <tr>
+          <td>Phase 2</td>
+          <td>Dependency parsing fikrinden esinlenen biaffine encoder sentetik graphlarda eğitildi ve learned fingerprint feature'ları üretildi.</td>
+          <td>Handcrafted + learned feature karşılaştırması.</td>
+        </tr>
+        <tr>
+          <td>Phase 3</td>
+          <td>Eksik 3 algoritma koşuldu, timeout verenler aday havuzundan düşürülerek 9 algoritmalı timeout-aware evaluation yapıldı.</td>
+          <td>Final timeout-aware rapor, final selector modeli ve sabit portföy politikası.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>3. Datasetler</h2>
+    <p>
+      Toplam 16 dataset kullanıldı. Bunların 15 tanesi ground-truth graph'ı bilinen exact BN datasetidir.
+      <code>sachs</code> gerçek referans dataset olarak external tutuldu.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Dataset</th>
+          <th>Variable Sayısı</th>
+          <th>Sample Sayısı</th>
+          <th>Truth Tipi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>cat_chain</td><td>3</td><td>8000</td><td>exact_bn_sem</td></tr>
+        <tr><td>cat_collider</td><td>3</td><td>8000</td><td>exact_bn_sem</td></tr>
+        <tr><td>cancer</td><td>5</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>earthquake</td><td>5</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>survey</td><td>6</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>asia</td><td>8</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>sachs</td><td>11</td><td>10000</td><td>real_reference</td></tr>
+        <tr><td>child</td><td>20</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>insurance</td><td>27</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>water</td><td>32</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>mildew</td><td>35</td><td>4000</td><td>exact_bn_sem</td></tr>
+        <tr><td>alarm</td><td>37</td><td>10000</td><td>exact_bn_sem</td></tr>
+        <tr><td>barley</td><td>48</td><td>4000</td><td>exact_bn_sem</td></tr>
+        <tr><td>hailfinder</td><td>56</td><td>5000</td><td>exact_bn_sem</td></tr>
+        <tr><td>hepar2</td><td>70</td><td>3000</td><td>exact_bn_sem</td></tr>
+        <tr><td>win95pts</td><td>76</td><td>3000</td><td>exact_bn_sem</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>4. Algoritma Havuzu</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Algoritma</th>
+          <th>Durum</th>
+          <th>Not</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>PC_discrete</td><td>Hazır sonuç</td><td>Eski pipeline'dan import edildi.</td></tr>
+        <tr><td>FCI</td><td>Hazır sonuç</td><td>Eski pipeline'dan import edildi.</td></tr>
+        <tr><td>GES</td><td>Hazır sonuç</td><td>Eski pipeline'dan import edildi.</td></tr>
+        <tr><td>HC</td><td>Hazır sonuç</td><td>Eski pipeline'dan import edildi.</td></tr>
+        <tr><td>Tabu</td><td>Hazır sonuç</td><td>Eski pipeline'dan import edildi.</td></tr>
+        <tr><td>K2</td><td>Hazır sonuç</td><td>Eski pipeline'dan import edildi.</td></tr>
+        <tr><td>MMHC</td><td>Yeni koşuldu</td><td>CPU-bound; büyük datasetlerde timeout verdi.</td></tr>
+        <tr><td>BOSS</td><td>Yeni koşuldu</td><td>CPU-bound; küçük datasetlerde başarılı, büyüklerde timeout.</td></tr>
+        <tr><td>GRaSP</td><td>Yeni koşuldu</td><td>CPU-bound; küçük datasetlerde başarılı, büyüklerde timeout.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>5. Kullanılan Modeller</h2>
+
+    <h3>5.1 Portfolio Selector</h3>
+    <p>
+      Ana selector modeli iki parçadan oluşur:
+    </p>
+    <ul>
+      <li><strong>Pairwise RandomForestClassifier:</strong> Dataset feature'larına bakarak algoritma A mı algoritma B'den daha iyi olur sorusunu öğrenir.</li>
+      <li><strong>RandomForestRegressor:</strong> Her algoritma için göreli regret tahmin etmeye çalışır.</li>
+    </ul>
+    <p>
+      Prediction sırasında pairwise galibiyet skorları ve regret tahminleri birleştirilir,
+      algoritmalar sıralanır ve Top-3 önerilir.
+    </p>
+
+    <h3>5.2 Selector Feature Girdileri</h3>
+    <p>
+      Selector modeller feature kullanır; sadece encoder'a bağlı değildir. Selector'ın ana girdisi datasetten
+      çıkarılan sayısal feature'lardır. Bu feature'lar iki kaynaktan gelebilir:
+      elle tasarlanmış <code>handcrafted</code> feature'lar ve encoder'dan gelen
+      <code>learned fingerprint</code> feature'ları.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature Set</th>
+          <th>Kaynak</th>
+          <th>Selector'a Nasıl Girer?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>handcrafted_all</code></td>
+          <td>Doğrudan datasetten hesaplanır.</td>
+          <td>Sample sayısı, variable sayısı, MI, Cramer's V, cardinality, proxy density gibi feature'lar selector modeline verilir.</td>
+        </tr>
+        <tr>
+          <td><code>learned_only</code></td>
+          <td>Biaffine encoder'dan üretilir.</td>
+          <td>Encoder'ın edge-score matrisi ve variable embedding özetleri selector modeline feature olarak verilir.</td>
+        </tr>
+        <tr>
+          <td><code>handcrafted_plus_learned</code></td>
+          <td>İki kaynak birlikte kullanılır.</td>
+          <td>Handcrafted feature'lar ile encoder fingerprint feature'ları birleştirilip tek feature vektörü yapılır.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Yani encoder tek başına selector değildir. Encoder sadece ek feature üretir. Selector'ın kendi RandomForest
+      modelleri ve kendi öğrenilmiş parametreleri vardır. Akış şu şekildedir:
+      <code>dataset → handcrafted features + learned fingerprint → selector → algorithm ranking</code>.
+    </p>
+
+    <h3>5.3 Handcrafted Feature'lar</h3>
+    <p>
+      Datasetten manuel meta-feature'lar çıkarıldı: sample/variable sayısı, sample-to-feature ratio,
+      cardinality istatistikleri, entropy benzeri dağılım özellikleri, mutual information, normalized MI,
+      Cramer's V, chi-square p-value, CI rejection rate ve proxy graph density gibi ölçüler.
+    </p>
+
+    <h3>5.4 Dependency Parsing Fikri ve Biaffine Encoder</h3>
+    <p>
+      Dependency parsing'te kelimeler arasında head-to-dependent arc skorları hesaplanır.
+      Causal discovery'de buna benzer şekilde variable çiftleri arasında cause-to-effect edge skorları düşünülebilir.
+      Bu yüzden Dozat-Manning tarzı biaffine pairwise scoring fikrini causal graph yapısına uyarladık.
+    </p>
+    <p>
+      Bu encoder final graph üretmek için değil, datasetin yapısal fingerprint'ini çıkarmak için kullanıldı.
+      Encoder her variable çifti için yönlü edge skoru üretir; sonra bu skor matrisi özetlenerek
+      <code>learned fingerprint</code> feature'larına çevrilir.
+    </p>
+    <p>
+      Encoder'ın ürettiği örnek feature'lar şunlardır:
+      <code>lf_prob_mean</code>, <code>lf_prob_std</code>, <code>lf_density_t10</code>,
+      <code>lf_asym_mean</code>, <code>lf_out_mean</code>, <code>lf_in_mean</code>,
+      <code>lf_embed_mean_00</code> ve benzeri embedding özetleri.
+      Bunlar graph'ın muhtemel yoğunluğu, yön asimetrisi ve variable temsilleri hakkında selector'a sinyal verir.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Encoder Ayarı</th>
+          <th>Değer</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Sentetik graph sayısı</td><td>3000</td></tr>
+        <tr><td>Training device</td><td>cuda</td></tr>
+        <tr><td>Epoch</td><td>100</td></tr>
+        <tr><td>Validation AUC</td><td>0.9043</td></tr>
+        <tr><td>Validation AP</td><td>0.4583</td></tr>
+        <tr><td>Model path</td><td><code>artifacts/learned/biaffine_encoder.pt</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>6. Eksik Algoritma Run Sonuçları</h2>
+    <p>
+      <code>MMHC</code>, <code>BOSS</code> ve <code>GRaSP</code> için 120 saniyelik hard timeout ile run yapıldı.
+      Timeout veren algoritmalar o dataset için aday kabul edilmedi.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Algoritma</th>
+          <th>Success</th>
+          <th>Timeout</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>BOSS</td><td>7</td><td>9</td></tr>
+        <tr><td>GRaSP</td><td>7</td><td>9</td></tr>
+        <tr><td>MMHC</td><td>6</td><td>10</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Tam 9 algoritma coverage sadece şu exact datasetlerde oluştu:
+      <code>asia</code>, <code>cancer</code>, <code>cat_chain</code>, <code>cat_collider</code>,
+      <code>earthquake</code>, <code>survey</code>.
+    </p>
+  </section>
+
+  <section>
+    <h2>7. Evaluation Sonuçları</h2>
+
+    <h3>7.1 Phase 1 - 6 Algoritma, Handcrafted Feature'lar (15 exact datasetin tamamında eski pipeline'dan hazır gelen 6 algoritma kullanıldı.)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Yöntem</th>
+          <th>Top-1 Hit</th>
+          <th>Top-3 Hit</th>
+          <th>Regret@1</th>
+          <th>Regret@3</th>
+          <th>Oracle Ratio@3</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>train_best_fixed_top3</td><td>0.6000</td><td>0.9333</td><td>2.4000</td><td>0.1333</td><td>1.0034</td></tr>
+        <tr><td>train_oracle_frequency</td><td>0.6000</td><td>0.8667</td><td>2.4000</td><td>0.2000</td><td>1.0046</td></tr>
+        <tr><td>train_mean_shd</td><td>0.6000</td><td>0.8000</td><td>2.4000</td><td>0.6667</td><td>1.0110</td></tr>
+        <tr><td>learned_all</td><td>0.4000</td><td>0.7333</td><td>5.3333</td><td>1.3333</td><td>1.1055</td></tr>
+        <tr><td>random_top3</td><td>0.2660</td><td>0.6233</td><td>9.7540</td><td>3.0240</td><td>1.2571</td></tr>
+      </tbody>
+    </table>
+
+    <h3>7.2 Phase 2 - Learned Fingerprint Eklenmiş Selector (Algoritma havuzu yine 6 algoritma; fark olarak encoder'dan gelen learned feature'lar test edildi.)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Yöntem</th>
+          <th>Top-1 Hit</th>
+          <th>Top-3 Hit</th>
+          <th>Regret@1</th>
+          <th>Regret@3</th>
+          <th>Oracle Ratio@3</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>phase2_handcrafted_all</td><td>0.4000</td><td>0.7333</td><td>5.3333</td><td>1.3333</td><td>1.1055</td></tr>
+        <tr><td>phase2_handcrafted_plus_learned</td><td>0.4000</td><td>0.7333</td><td>5.3333</td><td>1.3333</td><td>1.1055</td></tr>
+        <tr><td>phase2_learned_only</td><td>0.4667</td><td>0.6667</td><td>3.0667</td><td>0.4667</td><td>1.1346</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Phase 2'de learned fingerprint anlamlı sinyal taşıyor gibi görünse de, sabit güçlü portföyü geçemedi.
+    </p>
+
+    <h3>7.3 Phase 3 - Timeout-Aware 9 Algoritma Evaluation (Timeout veren algoritmalar o dataset için dışlandı.)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Yöntem</th>
+          <th>Top-1 Hit</th>
+          <th>Top-3 Hit</th>
+          <th>Regret@1</th>
+          <th>Regret@3</th>
+          <th>Oracle Ratio@3</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>train_best_fixed_top3</td><td>0.6000</td><td>0.8000</td><td>2.5333</td><td>0.3333</td><td>1.0049</td></tr>
+        <tr><td>train_oracle_frequency</td><td>0.6000</td><td>0.8000</td><td>2.5333</td><td>0.3333</td><td>1.0049</td></tr>
+        <tr><td>handcrafted_all selector</td><td>0.3333</td><td>0.6000</td><td>7.0667</td><td>0.8667</td><td>1.2860</td></tr>
+        <tr><td>learned_only selector</td><td>0.4000</td><td>0.6000</td><td>3.4000</td><td>1.0000</td><td>1.1268</td></tr>
+        <tr><td>handcrafted_plus_learned selector</td><td>0.4667</td><td>0.5333</td><td>2.8667</td><td>1.0667</td><td>1.1524</td></tr>
+        <tr><td>random_top3</td><td>0.2417</td><td>0.5710</td><td>9.5740</td><td>3.2143</td><td>1.3074</td></tr>
+      </tbody>
+    </table>
+
+    <h3>7.4 Phase 3 - Sadece Tam 9 Algoritmalı 6 Dataset (Sadece 6 küçük dataset; bu datasetlerde 9 algoritmanın tamamı başarıyla koştu.)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Yöntem</th>
+          <th>Top-1 Hit</th>
+          <th>Top-3 Hit</th>
+          <th>Regret@1</th>
+          <th>Regret@3</th>
+          <th>Oracle Ratio@3</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>train_best_fixed_top3</td><td>0.5000</td><td>0.8333</td><td>1.3333</td><td>0.3333</td><td>1.0000</td></tr>
+        <tr><td>train_oracle_frequency</td><td>0.5000</td><td>0.8333</td><td>1.3333</td><td>0.3333</td><td>1.0000</td></tr>
+        <tr><td>train_mean_shd</td><td>0.3333</td><td>0.5000</td><td>1.6667</td><td>1.3333</td><td>1.5333</td></tr>
+        <tr><td>learned_only selector</td><td>0.1667</td><td>0.3333</td><td>2.1667</td><td>1.0000</td><td>1.3750</td></tr>
+        <tr><td>random_top3</td><td>0.3042</td><td>0.5817</td><td>1.8542</td><td>0.8408</td><td>1.2155</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>8. Dataset Bazında Gerçek En İyi Algoritmalar</h2>
+    <p>
+      Aşağıdaki tablo timeout-aware target tablosunda exact datasetler için SHD'ye göre en iyi algoritmayı gösterir.
+      Düşük SHD daha iyidir.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Dataset</th>
+          <th>Gerçek En İyi Algoritma</th>
+          <th>SHD</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>alarm</td><td>PC_discrete</td><td>4.0</td></tr>
+        <tr><td>asia</td><td>HC</td><td>2.0</td></tr>
+        <tr><td>barley</td><td>PC_discrete</td><td>60.0</td></tr>
+        <tr><td>cancer</td><td>BOSS</td><td>0.0</td></tr>
+        <tr><td>cat_chain</td><td>HC</td><td>1.0</td></tr>
+        <tr><td>cat_collider</td><td>PC_discrete</td><td>0.0</td></tr>
+        <tr><td>child</td><td>K2</td><td>39.0</td></tr>
+        <tr><td>earthquake</td><td>BOSS</td><td>0.0</td></tr>
+        <tr><td>hailfinder</td><td>PC_discrete</td><td>44.0</td></tr>
+        <tr><td>hepar2</td><td>HC</td><td>72.0</td></tr>
+        <tr><td>insurance</td><td>PC_discrete</td><td>25.0</td></tr>
+        <tr><td>mildew</td><td>PC_discrete</td><td>17.0</td></tr>
+        <tr><td>survey</td><td>PC_discrete</td><td>3.0</td></tr>
+        <tr><td>water</td><td>GES</td><td>58.0</td></tr>
+        <tr><td>win95pts</td><td>PC_discrete</td><td>81.0</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>9. Final Karar</h2>
+    <p class="decision">
+      Şu anki üretilebilir ve savunulabilir final politika:
+      <code>PC_discrete</code>, <code>HC</code>, <code>K2</code>.
+    </p>
+    <p>
+      Bunun nedeni basit: mevcut dataset sayısı küçük olduğu için learned selector overfit/kararsız davranıyor.
+      Buna karşılık sabit güçlü portföy LODO değerlendirmede daha iyi Top-3 hit ve daha düşük Regret@3 veriyor.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Artifact</th>
+          <th>Path</th>
+          <th>Anlamı</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Final Phase 3 selector modeli</td>
+          <td><code>artifacts/models/selector_phase3_timeout_aware.joblib</code></td>
+          <td>Timeout-aware targetlarla eğitilmiş ML selector. Bu artifact evaluation sonucuna göre <code>handcrafted_all</code> feature set'iyle kaydedildi; yani final Phase 3 selector encoder feature'larını değil, handcrafted feature'ları kullanıyor.</td>
+        </tr>
+        <tr>
+          <td>En iyi sabit portföy politikası</td>
+          <td><code>artifacts/models/phase3_fixed_policy.json</code></td>
+          <td>Evaluation'a göre en güçlü pratik Top-3 politika.</td>
+        </tr>
+        <tr>
+          <td>Phase 3 rapor</td>
+          <td><code>reports/phase3_evidence.md</code></td>
+          <td>Timeout-aware metriklerin Markdown raporu.</td>
+        </tr>
+        <tr>
+          <td>Bu HTML raporu</td>
+          <td><code>reports/system_report.html</code></td>
+          <td>Sistemin okunabilir genel özeti.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>10. Bilinmeyen Keyword Açıklamaları</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Keyword</th>
+          <th>Açıklama</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Causal Discovery</td>
+          <td>Veriden değişkenler arasındaki olası neden-sonuç graph yapısını öğrenmeye çalışan alan.</td>
+        </tr>
+        <tr>
+          <td>DAG</td>
+          <td>Directed Acyclic Graph. Yönlü ve cycle içermeyen graph.</td>
+        </tr>
+        <tr>
+          <td>CPDAG</td>
+          <td>Aynı conditional independence ilişkilerini temsil eden DAG sınıfının kısmi yönlü graph gösterimi.</td>
+        </tr>
+        <tr>
+          <td>SHD</td>
+          <td>Structural Hamming Distance. Tahmin edilen graph ile gerçek graph arasındaki edge ekleme/silme/yön hatası sayısı. Düşük daha iyidir.</td>
+        </tr>
+        <tr>
+          <td>Top-3 Hit</td>
+          <td>Gerçek en iyi algoritma, önerilen ilk 3 algoritma içinde mi? 1 evet, 0 hayır. Ortalama değer başarı oranıdır.</td>
+        </tr>
+        <tr>
+          <td>Regret@3</td>
+          <td>Önerilen Top-3 içindeki en iyi algoritmanın SHD'si ile gerçek oracle en iyi SHD arasındaki fark. Düşük daha iyidir.</td>
+        </tr>
+        <tr>
+          <td>Oracle</td>
+          <td>Ground truth bilindiği için sonradan hesaplanan gerçek en iyi algoritma. Gerçek dünyada inference anında bilinmez.</td>
+        </tr>
+        <tr>
+          <td>LODO</td>
+          <td>Leave-One-Dataset-Out. Her turda bir dataset testte bırakılır, kalan datasetlerle train yapılır.</td>
+        </tr>
+        <tr>
+          <td>Timeout-aware</td>
+          <td>Timeout veren algoritmayı o dataset için aday kabul etmeyen değerlendirme biçimi.</td>
+        </tr>
+        <tr>
+          <td>Handcrafted Feature</td>
+          <td>Datasetten elle tasarlanmış istatistiksel feature'lar: sample sayısı, MI, cardinality, proxy density gibi.</td>
+        </tr>
+        <tr>
+          <td>Learned Fingerprint</td>
+          <td>Biaffine encoder ile öğrenilmiş graph-yapısı özeti. Datasetin yapısal imzası gibi kullanılır.</td>
+        </tr>
+        <tr>
+          <td>Biaffine Encoder</td>
+          <td>İki variable arasında yönlü edge skoru üreten neural encoder. Dependency parsing'teki arc scoring fikrinden esinlenir.</td>
+        </tr>
+        <tr>
+          <td>Dependency Parsing</td>
+          <td>Cümlede kelimeler arasındaki head-dependent ilişkilerini çıkaran NLP görevi. Biz bu fikri variable-edge ilişkisine benzettik.</td>
+        </tr>
+        <tr>
+          <td>SATzilla</td>
+          <td>Problem instance feature'larına göre en uygun solver seçme fikrinin klasik örneği. Biz causal discovery algoritma seçimine benzer mantık uyguladık.</td>
+        </tr>
+        <tr>
+          <td>Portfolio Selector</td>
+          <td>Tek bir algoritmaya bağlı kalmak yerine, dataset özelliklerine göre algoritma portföyünden seçim yapan sistem.</td>
+        </tr>
+        <tr>
+          <td>RandomForest</td>
+          <td>Birden çok decision tree kullanan klasik ML modeli. Bu sistemde classifier ve regressor olarak kullanıldı.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>11. Sonraki Mantıklı Adım</h2>
+    <p>
+      Modelin sıfırdan tüm ranking'i öğrenmesi mevcut veriyle güçlü görünmüyor.
+      Daha iyi bir sonraki yaklaşım:
+    </p>
+    <div class="note">
+      Default olarak <code>PC_discrete, HC, K2</code> öner.
+      Learned fingerprint ve handcrafted feature'ları sadece bu default portföyden sapmak için kullan.
+      Yani modelin görevi tüm sıralamayı öğrenmek değil, "BOSS veya GES gibi bir algoritma bu dataset için gerçekten defaulttan daha iyi olabilir mi?" sorusuna cevap vermek olsun.
+    </div>
+    <p class="small">
+      Bu rapor mevcut artifactlara göre hazırlanmıştır. Ana kaynak dosyalar:
+      <code>reports/phase1_comparison_summary.csv</code>,
+      <code>reports/phase2_summary.csv</code>,
+      <code>reports/phase3_summary.csv</code>,
+      <code>artifacts/learned/synthetic_manifest.json</code>.
+    </p>
+  </section>
+</main>
+</body>
+</html>

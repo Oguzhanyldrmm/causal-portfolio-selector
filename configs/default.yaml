@@ -1,0 +1,46 @@
+project_root: "."
+
+source_run_dir: "/home/oguzhan/Causal-Algorithm-Selection/runs/benchmark_runs_min_oct_no_pathfinder/20260427T215118Z"
+
+algorithms:
+  - PC_discrete
+  - FCI
+  - GES
+  - HC
+  - Tabu
+  - K2
+
+external_datasets:
+  - sachs
+
+features:
+  max_pairs: 800
+  random_seed: 42
+  association_threshold: 0.05
+  ci_alpha: 0.01
+
+model:
+  random_state: 42
+  n_estimators: 300
+  min_samples_leaf: 2
+
+learned:
+  enabled: false
+  device: auto
+  synthetic_graph_count: 1000
+  n_vars_choices: [4, 6, 8, 10, 15, 20, 30]
+  sample_sizes: [500, 1000, 3000]
+  cardinality_min: 2
+  cardinality_max: 8
+  max_indegree: 4
+  edge_probability_min: 0.08
+  edge_probability_max: 0.25
+  embedding_dim: 16
+  hidden_dim: 32
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.001
+  validation_fraction: 0.2
+  max_feature_rows: 1000
+  synthetic_workers: 4
+  random_seed: 42
