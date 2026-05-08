@@ -1,13 +1,31 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
+
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-*.egg-info/
 
-# Generated / heavy local outputs
+# Local data and generated artifacts.
 data/
 artifacts/
+experiments/
+logs/
 reports/*
 !reports/system_report.html
+
+# Large model/archive outputs.
+*.joblib
+*.pkl
+*.pt
+*.pth
+*.onnx
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# Final artifact exports live outside the repo, but keep accidental copies out.
+causal_selection_final_export*/
+*_final_export*/

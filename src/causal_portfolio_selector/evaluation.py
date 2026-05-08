@@ -31,6 +31,14 @@ def evaluate_prediction(
     predicted_ranking = dict(prediction["ranking"])  # type: ignore[arg-type]
     predicted_order = sorted(predicted_ranking, key=lambda name: predicted_ranking[name])
     top3 = predicted_order[:3]
+    actual_top3 = (
+        group.sort_values(["quality_rank", "shd", "combined_score", "algorithm_name"], ascending=[True, True, False, True])
+        ["algorithm_name"]
+        .astype(str)
+        .head(3)
+        .tolist()
+    )
+    top3_overlap = len(set(top3) & set(actual_top3))
 
     oracle_shd = min(shd_by_algorithm.values())
     oracle_algorithms = {
@@ -58,9 +66,13 @@ def evaluate_prediction(
         "dataset_name": dataset_name,
         "predicted_top1": pred_best,
         "predicted_top3": ",".join(top3),
+        "actual_top3": ",".join(actual_top3),
         "oracle_best": ",".join(sorted(oracle_algorithms)),
         "top1_hit": float(pred_best in oracle_algorithms),
         "top3_hit": float(any(algorithm in oracle_algorithms for algorithm in top3)),
+        "oracle_in_top3": float(any(algorithm in oracle_algorithms for algorithm in top3)),
+        "top3_overlap": float(top3_overlap),
+        "top3_overlap_at_least_2": float(top3_overlap >= 2),
         "oracle_shd": float(oracle_shd),
         "predicted_top1_shd": float(shd_by_algorithm[pred_best]),
         "best_top3_shd": float(best_top3_shd),
@@ -167,6 +179,9 @@ def aggregate_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
     numeric_columns = [
         "top1_hit",
         "top3_hit",
+        "oracle_in_top3",
+        "top3_overlap",
+        "top3_overlap_at_least_2",
         "regret_at_1",
         "regret_at_3",
         "oracle_ratio_at_3",
@@ -174,12 +189,13 @@ def aggregate_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
         "rank_kendall",
     ]
     present = [column for column in numeric_columns if column in metrics.columns]
-    return (
+    summary = (
         metrics.groupby("split_name")[present]
         .mean(numeric_only=True)
         .reset_index()
         .sort_values("split_name")
     )
+    return summary.rename(columns={"top3_overlap": "avg_top3_overlap"})
 
 
 def summary_markdown(aggregate: pd.DataFrame) -> str:

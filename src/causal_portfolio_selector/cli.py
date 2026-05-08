@@ -11,6 +11,7 @@ from .pipeline import (
     run_evaluate,
     run_evidence,
     run_build_learned_features,
+    run_build_knn_prior_features,
     run_build_synthetic_training_tables,
     run_evaluate_synthetic_selector_on_exact,
     run_generate_synthetic_bn,
@@ -23,7 +24,10 @@ from .pipeline import (
     run_train,
     run_train_fingerprint_from_synthetic,
     run_train_fingerprint,
+    run_train_synthetic_score_selector,
     run_train_synthetic_selector,
+    run_train_synthetic_top3_combination_selector,
+    run_train_synthetic_top3_selector,
 )
 
 
@@ -155,6 +159,16 @@ def build_parser() -> argparse.ArgumentParser:
     synthetic_tables_parser.add_argument("--runs", required=True)
     synthetic_tables_parser.add_argument("--output", required=True)
 
+    knn_prior_parser = subparsers.add_parser(
+        "build-knn-prior-features",
+        help="Build kNN prior features from synthetic training tables.",
+    )
+    knn_prior_parser.add_argument("--tables", required=True)
+    knn_prior_parser.add_argument("--output", required=True)
+    knn_prior_parser.add_argument("--exact-tables", default=None)
+    knn_prior_parser.add_argument("--metadata-output", default=None)
+    knn_prior_parser.add_argument("--k", type=int, default=50)
+
     synthetic_encoder_parser = subparsers.add_parser(
         "train-fingerprint-from-synthetic",
         help="Train the biaffine fingerprint encoder from generated synthetic BNs.",
@@ -171,6 +185,34 @@ def build_parser() -> argparse.ArgumentParser:
     synthetic_selector_parser.add_argument("--tables", required=True)
     synthetic_selector_parser.add_argument("--encoder", default=None)
     synthetic_selector_parser.add_argument("--output", required=True)
+
+    synthetic_top3_selector_parser = subparsers.add_parser(
+        "train-synthetic-top3-selector",
+        help="Train a top-3 membership selector using synthetic training tables.",
+    )
+    synthetic_top3_selector_parser.add_argument("--tables", required=True)
+    synthetic_top3_selector_parser.add_argument("--encoder", default=None)
+    synthetic_top3_selector_parser.add_argument("--output", required=True)
+
+    synthetic_score_selector_parser = subparsers.add_parser(
+        "train-synthetic-score-selector",
+        help="Train a score-regression selector using synthetic training tables.",
+    )
+    synthetic_score_selector_parser.add_argument("--tables", required=True)
+    synthetic_score_selector_parser.add_argument("--encoder", default=None)
+    synthetic_score_selector_parser.add_argument("--output", required=True)
+
+    synthetic_top3_combo_parser = subparsers.add_parser(
+        "train-synthetic-top3-combination-selector",
+        help="Train a top-3 combination reward selector using synthetic training tables.",
+    )
+    synthetic_top3_combo_parser.add_argument("--tables", required=True)
+    synthetic_top3_combo_parser.add_argument("--encoder", default=None)
+    synthetic_top3_combo_parser.add_argument("--output", required=True)
+    synthetic_top3_combo_parser.add_argument("--oracle-weight", type=float, default=3.0)
+    synthetic_top3_combo_parser.add_argument("--overlap-weight", type=float, default=1.0)
+    synthetic_top3_combo_parser.add_argument("--overlap-at-least-2-weight", type=float, default=0.0)
+    synthetic_top3_combo_parser.add_argument("--regret-weight", type=float, default=0.25)
 
     synthetic_exact_parser = subparsers.add_parser(
         "evaluate-synthetic-selector-on-exact",
@@ -305,6 +347,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}: {path}")
         return 0
 
+    if args.command == "build-knn-prior-features":
+        outputs = run_build_knn_prior_features(
+            tables=args.tables,
+            output=args.output,
+            exact_tables=args.exact_tables,
+            metadata_output=args.metadata_output,
+            k=args.k,
+        )
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
+        return 0
+
     if args.command == "train-fingerprint-from-synthetic":
         outputs = run_train_fingerprint_from_synthetic(
             config,
@@ -325,6 +379,43 @@ def main(argv: list[str] | None = None) -> int:
             tables=args.tables,
             encoder=args.encoder,
             output=args.output,
+        )
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
+        return 0
+
+    if args.command == "train-synthetic-top3-selector":
+        outputs = run_train_synthetic_top3_selector(
+            config,
+            tables=args.tables,
+            encoder=args.encoder,
+            output=args.output,
+        )
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
+        return 0
+
+    if args.command == "train-synthetic-score-selector":
+        outputs = run_train_synthetic_score_selector(
+            config,
+            tables=args.tables,
+            encoder=args.encoder,
+            output=args.output,
+        )
+        for name, path in outputs.items():
+            print(f"{name}: {path}")
+        return 0
+
+    if args.command == "train-synthetic-top3-combination-selector":
+        outputs = run_train_synthetic_top3_combination_selector(
+            config,
+            tables=args.tables,
+            encoder=args.encoder,
+            output=args.output,
+            oracle_weight=args.oracle_weight,
+            overlap_weight=args.overlap_weight,
+            overlap_at_least_2_weight=args.overlap_at_least_2_weight,
+            regret_weight=args.regret_weight,
         )
         for name, path in outputs.items():
             print(f"{name}: {path}")

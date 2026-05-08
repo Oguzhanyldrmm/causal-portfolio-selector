@@ -25,7 +25,14 @@ from .learned.featurize import dataframe_to_learned_inputs
 from .learned.fingerprint import extract_fingerprint, learned_feature_columns
 from .learned.model import load_biaffine_encoder, train_biaffine_encoder
 from .learned.synthetic import SyntheticExample
-from .models import load_selector, save_selector, train_selector
+from .models import (
+    load_selector,
+    save_selector,
+    train_score_selector,
+    train_selector,
+    train_top3_combination_selector,
+    train_top3_membership_selector,
+)
 from .phase3 import (
     ALL_ALGORITHMS,
     GraphEvaluation,
@@ -404,6 +411,16 @@ def train_fingerprint_from_synthetic(
     return {**result, "manifest_path": str(manifest_path)}
 
 
+def _handcrafted_feature_sets(feature_table: pd.DataFrame) -> dict[str, tuple[str, ...]]:
+    missing = [column for column in FEATURE_COLUMNS if column not in feature_table.columns]
+    if missing:
+        raise ValueError(f"Feature table is missing handcrafted columns: {missing}")
+    knn_columns = tuple(column for column in feature_table.columns if column.startswith("knn_"))
+    if knn_columns:
+        return {"handcrafted_plus_knn": (*FEATURE_COLUMNS, *knn_columns)}
+    return {"handcrafted_all": FEATURE_COLUMNS}
+
+
 def train_synthetic_selector(
     config: AppConfig,
     *,
@@ -415,8 +432,10 @@ def train_synthetic_selector(
     output = Path(output).expanduser().resolve()
     feature_table = pd.read_csv(tables / "features.csv")
     targets = pd.read_csv(tables / "targets.csv")
+    algorithms = _available_algorithms_from_targets(targets)
     combined = feature_table
-    feature_sets: dict[str, tuple[str, ...]] = {"handcrafted_all": FEATURE_COLUMNS}
+    base_feature_sets = _handcrafted_feature_sets(feature_table)
+    feature_sets: dict[str, tuple[str, ...]] = dict(base_feature_sets)
     if encoder is not None:
         learned = _build_synthetic_learned_feature_table(
             config,
@@ -426,7 +445,8 @@ def train_synthetic_selector(
         combined = feature_table.merge(learned, on="dataset_name", how="inner", validate="one_to_one")
         learned_cols = tuple(column for column in learned.columns if column.startswith("lf_"))
         feature_sets["learned_only"] = learned_cols
-        feature_sets["handcrafted_plus_learned"] = (*FEATURE_COLUMNS, *learned_cols)
+        for base_name, base_columns in base_feature_sets.items():
+            feature_sets[f"{base_name}_plus_learned"] = (*base_columns, *learned_cols)
         combined.to_csv(tables / "features_plus_learned.csv", index=False)
 
     train_names = sorted(targets.loc[targets["split_role"] == "synthetic_train", "dataset_name"].unique())
@@ -442,7 +462,7 @@ def train_synthetic_selector(
             combined,
             targets,
             dataset_names=train_names,
-            algorithms=ALL_ALGORITHMS,
+            algorithms=algorithms,
             config=config.model,
             feature_names=feature_names,
         )
@@ -479,7 +499,7 @@ def train_synthetic_selector(
         combined,
         targets,
         dataset_names=final_train_names,
-        algorithms=ALL_ALGORITHMS,
+        algorithms=algorithms,
         config=config.model,
         feature_names=feature_sets[best_feature_set],
     )
@@ -509,7 +529,7 @@ def train_synthetic_selector(
                 "train_dataset_count": len(train_names),
                 "validation_dataset_count": len(val_names),
                 "test_dataset_count": len(test_names),
-                "algorithms": list(ALL_ALGORITHMS),
+                "algorithms": list(algorithms),
             },
             indent=2,
             sort_keys=True,
@@ -517,6 +537,389 @@ def train_synthetic_selector(
         + "\n"
     )
     return paths
+
+
+def train_synthetic_top3_selector(
+    config: AppConfig,
+    *,
+    tables: str | Path,
+    encoder: str | Path | None,
+    output: str | Path,
+) -> dict[str, Path]:
+    tables = Path(tables).expanduser().resolve()
+    output = Path(output).expanduser().resolve()
+    feature_table = pd.read_csv(tables / "features.csv")
+    targets = pd.read_csv(tables / "targets.csv")
+    algorithms = _available_algorithms_from_targets(targets)
+    combined = feature_table
+    base_feature_sets = _handcrafted_feature_sets(feature_table)
+    feature_sets: dict[str, tuple[str, ...]] = dict(base_feature_sets)
+    if encoder is not None:
+        learned = _build_synthetic_learned_feature_table(
+            config,
+            tables=tables,
+            encoder=Path(encoder).expanduser().resolve(),
+        )
+        combined = feature_table.merge(learned, on="dataset_name", how="inner", validate="one_to_one")
+        learned_cols = tuple(column for column in learned.columns if column.startswith("lf_"))
+        feature_sets["learned_only"] = learned_cols
+        for base_name, base_columns in base_feature_sets.items():
+            feature_sets[f"{base_name}_plus_learned"] = (*base_columns, *learned_cols)
+        combined.to_csv(tables / "features_plus_learned.csv", index=False)
+
+    train_names = sorted(targets.loc[targets["split_role"] == "synthetic_train", "dataset_name"].unique())
+    val_names = sorted(targets.loc[targets["split_role"] == "synthetic_val", "dataset_name"].unique())
+    test_names = sorted(targets.loc[targets["split_role"] == "synthetic_test", "dataset_name"].unique())
+    if not train_names:
+        raise ValueError("No synthetic_train datasets found in targets.")
+    validation_rows: list[dict[str, Any]] = []
+    test_rows: list[dict[str, Any]] = []
+    for feature_set_name, feature_names in feature_sets.items():
+        selector = train_top3_membership_selector(
+            combined,
+            targets,
+            dataset_names=train_names,
+            algorithms=algorithms,
+            config=config.model,
+            feature_names=feature_names,
+        )
+        validation_rows.extend(
+            _evaluate_selector_rows(
+                selector,
+                combined,
+                targets,
+                dataset_names=val_names,
+                split_name="synthetic_val",
+                method=feature_set_name,
+            )
+        )
+        test_rows.extend(
+            _evaluate_selector_rows(
+                selector,
+                combined,
+                targets,
+                dataset_names=test_names,
+                split_name="synthetic_test",
+                method=feature_set_name,
+            )
+        )
+
+    validation_metrics = pd.DataFrame(validation_rows)
+    test_metrics = pd.DataFrame(test_rows)
+    if validation_metrics.empty:
+        raise ValueError("No validation metrics were produced.")
+    validation_summary = _aggregate_metrics_by_method(validation_metrics)
+    best_feature_set = _choose_best_top3_feature_set(validation_summary)
+    final_train_names = sorted(set(train_names) | set(val_names))
+    best_selector = train_top3_membership_selector(
+        combined,
+        targets,
+        dataset_names=final_train_names,
+        algorithms=algorithms,
+        config=config.model,
+        feature_names=feature_sets[best_feature_set],
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    save_selector(best_selector, output)
+
+    paths = {
+        "selector": output,
+        "validation_metrics": output.parent / "selector_validation_metrics.csv",
+        "validation_summary": output.parent / "selector_validation_summary.csv",
+        "test_metrics": output.parent / "selector_test_metrics.csv",
+        "test_summary": output.parent / "selector_test_summary.csv",
+        "manifest": output.parent / "selector_manifest.json",
+    }
+    validation_metrics.to_csv(paths["validation_metrics"], index=False)
+    validation_summary.to_csv(paths["validation_summary"], index=False)
+    test_metrics.to_csv(paths["test_metrics"], index=False)
+    _aggregate_metrics_by_method(test_metrics).to_csv(paths["test_summary"], index=False)
+    paths["manifest"].write_text(
+        json.dumps(
+            {
+                "model_path": str(output),
+                "tables": str(tables),
+                "encoder": str(encoder) if encoder is not None else None,
+                "objective": "top3_membership",
+                "feature_set": best_feature_set,
+                "feature_names": list(feature_sets[best_feature_set]),
+                "train_dataset_count": len(train_names),
+                "validation_dataset_count": len(val_names),
+                "test_dataset_count": len(test_names),
+                "algorithms": list(algorithms),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return paths
+
+
+def train_synthetic_score_selector(
+    config: AppConfig,
+    *,
+    tables: str | Path,
+    encoder: str | Path | None,
+    output: str | Path,
+) -> dict[str, Path]:
+    tables = Path(tables).expanduser().resolve()
+    output = Path(output).expanduser().resolve()
+    feature_table = pd.read_csv(tables / "features.csv")
+    targets = pd.read_csv(tables / "targets.csv")
+    algorithms = _available_algorithms_from_targets(targets)
+    combined = feature_table
+    base_feature_sets = _handcrafted_feature_sets(feature_table)
+    feature_sets: dict[str, tuple[str, ...]] = dict(base_feature_sets)
+    if encoder is not None:
+        learned = _build_synthetic_learned_feature_table(
+            config,
+            tables=tables,
+            encoder=Path(encoder).expanduser().resolve(),
+        )
+        combined = feature_table.merge(learned, on="dataset_name", how="inner", validate="one_to_one")
+        learned_cols = tuple(column for column in learned.columns if column.startswith("lf_"))
+        feature_sets["learned_only"] = learned_cols
+        for base_name, base_columns in base_feature_sets.items():
+            feature_sets[f"{base_name}_plus_learned"] = (*base_columns, *learned_cols)
+        combined.to_csv(tables / "features_plus_learned.csv", index=False)
+
+    train_names = sorted(targets.loc[targets["split_role"] == "synthetic_train", "dataset_name"].unique())
+    val_names = sorted(targets.loc[targets["split_role"] == "synthetic_val", "dataset_name"].unique())
+    test_names = sorted(targets.loc[targets["split_role"] == "synthetic_test", "dataset_name"].unique())
+    if not train_names:
+        raise ValueError("No synthetic_train datasets found in targets.")
+    validation_rows: list[dict[str, Any]] = []
+    test_rows: list[dict[str, Any]] = []
+    score_column = "combined_score"
+    for feature_set_name, feature_names in feature_sets.items():
+        selector = train_score_selector(
+            combined,
+            targets,
+            dataset_names=train_names,
+            algorithms=algorithms,
+            score_column=score_column,
+            config=config.model,
+            feature_names=feature_names,
+        )
+        validation_rows.extend(
+            _evaluate_selector_rows(
+                selector,
+                combined,
+                targets,
+                dataset_names=val_names,
+                split_name="synthetic_val",
+                method=feature_set_name,
+            )
+        )
+        test_rows.extend(
+            _evaluate_selector_rows(
+                selector,
+                combined,
+                targets,
+                dataset_names=test_names,
+                split_name="synthetic_test",
+                method=feature_set_name,
+            )
+        )
+
+    validation_metrics = pd.DataFrame(validation_rows)
+    test_metrics = pd.DataFrame(test_rows)
+    if validation_metrics.empty:
+        raise ValueError("No validation metrics were produced.")
+    validation_summary = _aggregate_metrics_by_method(validation_metrics)
+    best_feature_set = _choose_best_top3_feature_set(validation_summary)
+    final_train_names = sorted(set(train_names) | set(val_names))
+    best_selector = train_score_selector(
+        combined,
+        targets,
+        dataset_names=final_train_names,
+        algorithms=algorithms,
+        score_column=score_column,
+        config=config.model,
+        feature_names=feature_sets[best_feature_set],
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    save_selector(best_selector, output)
+
+    paths = {
+        "selector": output,
+        "validation_metrics": output.parent / "selector_validation_metrics.csv",
+        "validation_summary": output.parent / "selector_validation_summary.csv",
+        "test_metrics": output.parent / "selector_test_metrics.csv",
+        "test_summary": output.parent / "selector_test_summary.csv",
+        "manifest": output.parent / "selector_manifest.json",
+    }
+    validation_metrics.to_csv(paths["validation_metrics"], index=False)
+    validation_summary.to_csv(paths["validation_summary"], index=False)
+    test_metrics.to_csv(paths["test_metrics"], index=False)
+    _aggregate_metrics_by_method(test_metrics).to_csv(paths["test_summary"], index=False)
+    paths["manifest"].write_text(
+        json.dumps(
+            {
+                "model_path": str(output),
+                "tables": str(tables),
+                "encoder": str(encoder) if encoder is not None else None,
+                "objective": "score_regression",
+                "score_column": score_column,
+                "feature_set": best_feature_set,
+                "feature_names": list(feature_sets[best_feature_set]),
+                "train_dataset_count": len(train_names),
+                "validation_dataset_count": len(val_names),
+                "test_dataset_count": len(test_names),
+                "algorithms": list(algorithms),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return paths
+
+
+def train_synthetic_top3_combination_selector(
+    config: AppConfig,
+    *,
+    tables: str | Path,
+    encoder: str | Path | None,
+    output: str | Path,
+    oracle_weight: float = 3.0,
+    overlap_weight: float = 1.0,
+    overlap_at_least_2_weight: float = 0.0,
+    regret_weight: float = 0.25,
+) -> dict[str, Path]:
+    tables = Path(tables).expanduser().resolve()
+    output = Path(output).expanduser().resolve()
+    feature_table = pd.read_csv(tables / "features.csv")
+    targets = pd.read_csv(tables / "targets.csv")
+    algorithms = _available_algorithms_from_targets(targets)
+    combined = feature_table
+    base_feature_sets = _handcrafted_feature_sets(feature_table)
+    feature_sets: dict[str, tuple[str, ...]] = dict(base_feature_sets)
+    if encoder is not None:
+        learned = _build_synthetic_learned_feature_table(
+            config,
+            tables=tables,
+            encoder=Path(encoder).expanduser().resolve(),
+        )
+        combined = feature_table.merge(learned, on="dataset_name", how="inner", validate="one_to_one")
+        learned_cols = tuple(column for column in learned.columns if column.startswith("lf_"))
+        feature_sets["learned_only"] = learned_cols
+        for base_name, base_columns in base_feature_sets.items():
+            feature_sets[f"{base_name}_plus_learned"] = (*base_columns, *learned_cols)
+        combined.to_csv(tables / "features_plus_learned.csv", index=False)
+
+    train_names = sorted(targets.loc[targets["split_role"] == "synthetic_train", "dataset_name"].unique())
+    val_names = sorted(targets.loc[targets["split_role"] == "synthetic_val", "dataset_name"].unique())
+    test_names = sorted(targets.loc[targets["split_role"] == "synthetic_test", "dataset_name"].unique())
+    if not train_names:
+        raise ValueError("No synthetic_train datasets found in targets.")
+    validation_rows: list[dict[str, Any]] = []
+    test_rows: list[dict[str, Any]] = []
+    for feature_set_name, feature_names in feature_sets.items():
+        selector = train_top3_combination_selector(
+            combined,
+            targets,
+            dataset_names=train_names,
+            algorithms=algorithms,
+            config=config.model,
+            feature_names=feature_names,
+            oracle_weight=oracle_weight,
+            overlap_weight=overlap_weight,
+            overlap_at_least_2_weight=overlap_at_least_2_weight,
+            regret_weight=regret_weight,
+        )
+        validation_rows.extend(
+            _evaluate_selector_rows(
+                selector,
+                combined,
+                targets,
+                dataset_names=val_names,
+                split_name="synthetic_val",
+                method=feature_set_name,
+            )
+        )
+        test_rows.extend(
+            _evaluate_selector_rows(
+                selector,
+                combined,
+                targets,
+                dataset_names=test_names,
+                split_name="synthetic_test",
+                method=feature_set_name,
+            )
+        )
+
+    validation_metrics = pd.DataFrame(validation_rows)
+    test_metrics = pd.DataFrame(test_rows)
+    if validation_metrics.empty:
+        raise ValueError("No validation metrics were produced.")
+    validation_summary = _aggregate_metrics_by_method(validation_metrics)
+    best_feature_set = _choose_best_top3_feature_set(validation_summary)
+    final_train_names = sorted(set(train_names) | set(val_names))
+    best_selector = train_top3_combination_selector(
+        combined,
+        targets,
+        dataset_names=final_train_names,
+        algorithms=algorithms,
+        config=config.model,
+        feature_names=feature_sets[best_feature_set],
+        oracle_weight=oracle_weight,
+        overlap_weight=overlap_weight,
+        overlap_at_least_2_weight=overlap_at_least_2_weight,
+        regret_weight=regret_weight,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    save_selector(best_selector, output)
+
+    paths = {
+        "selector": output,
+        "validation_metrics": output.parent / "selector_validation_metrics.csv",
+        "validation_summary": output.parent / "selector_validation_summary.csv",
+        "test_metrics": output.parent / "selector_test_metrics.csv",
+        "test_summary": output.parent / "selector_test_summary.csv",
+        "manifest": output.parent / "selector_manifest.json",
+    }
+    validation_metrics.to_csv(paths["validation_metrics"], index=False)
+    validation_summary.to_csv(paths["validation_summary"], index=False)
+    test_metrics.to_csv(paths["test_metrics"], index=False)
+    _aggregate_metrics_by_method(test_metrics).to_csv(paths["test_summary"], index=False)
+    paths["manifest"].write_text(
+        json.dumps(
+            {
+                "model_path": str(output),
+                "tables": str(tables),
+                "encoder": str(encoder) if encoder is not None else None,
+                "objective": "top3_combination_reward",
+                "reward_weights": {
+                    "oracle_in_top3": float(oracle_weight),
+                    "top3_overlap": float(overlap_weight),
+                    "top3_overlap_at_least_2": float(overlap_at_least_2_weight),
+                    "regret_at_3": float(regret_weight),
+                },
+                "feature_set": best_feature_set,
+                "feature_names": list(feature_sets[best_feature_set]),
+                "train_dataset_count": len(train_names),
+                "validation_dataset_count": len(val_names),
+                "test_dataset_count": len(test_names),
+                "algorithms": list(algorithms),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return paths
+
+
+def _available_algorithms_from_targets(targets: pd.DataFrame) -> tuple[str, ...]:
+    available = {str(name) for name in targets["algorithm_name"].dropna().unique()}
+    algorithms = tuple(name for name in ALL_ALGORITHMS if name in available)
+    extras = tuple(sorted(available - set(algorithms)))
+    result = (*algorithms, *extras)
+    if not result:
+        raise ValueError("No algorithms were found in targets.")
+    return result
 
 
 def evaluate_synthetic_selector_on_exact(
@@ -1242,9 +1645,21 @@ def _build_synthetic_learned_feature_table(
     model, payload, device = load_biaffine_encoder(encoder, device=config.learned.device)
     embedding_dim = int(payload["config"]["embedding_dim"])
     manifest = _load_synthetic_manifest(synthetic_root)
-    rows = []
-    for entry in manifest["datasets"]:
+    columns = ["dataset_name", *learned_feature_columns(embedding_dim)]
+    partial = tables / "learned_features.partial.csv"
+    if partial.exists():
+        partial_frame = pd.read_csv(partial)
+        rows = partial_frame.to_dict("records")
+        completed = {str(name) for name in partial_frame["dataset_name"].dropna().unique()}
+    else:
+        rows = []
+        completed = set()
+    entries = manifest["datasets"]
+    total = len(entries)
+    for entry in entries:
         dataset_name = str(entry["dataset_name"])
+        if dataset_name in completed:
+            continue
         dataset_path = synthetic_root / str(entry["dataset_path"])
         rows.append(
             {
@@ -1259,8 +1674,13 @@ def _build_synthetic_learned_feature_table(
                 ),
             }
         )
-    learned = pd.DataFrame(rows, columns=["dataset_name", *learned_feature_columns(embedding_dim)])
+        completed.add(dataset_name)
+        if len(rows) % 50 == 0 or len(rows) == total:
+            pd.DataFrame(rows, columns=columns).to_csv(partial, index=False)
+            print(f"learned_features: {len(rows)}/{total}", flush=True)
+    learned = pd.DataFrame(rows, columns=columns)
     learned.to_csv(existing, index=False)
+    partial.unlink(missing_ok=True)
     return learned
 
 
@@ -1309,6 +1729,9 @@ def _aggregate_metrics_by_method(metrics: pd.DataFrame) -> pd.DataFrame:
     numeric = [
         "top1_hit",
         "top3_hit",
+        "oracle_in_top3",
+        "top3_overlap",
+        "top3_overlap_at_least_2",
         "regret_at_1",
         "regret_at_3",
         "oracle_ratio_at_3",
@@ -1316,11 +1739,15 @@ def _aggregate_metrics_by_method(metrics: pd.DataFrame) -> pd.DataFrame:
         "rank_kendall",
     ]
     present = [column for column in numeric if column in metrics.columns]
-    return (
+    summary = (
         metrics.groupby(["split_name", "method"])[present]
         .mean(numeric_only=True)
         .reset_index()
-        .sort_values(["split_name", "top3_hit", "regret_at_3"], ascending=[True, False, True])
+    )
+    summary = summary.rename(columns={"top3_overlap": "avg_top3_overlap"})
+    return summary.sort_values(
+        ["split_name", "avg_top3_overlap", "top3_overlap_at_least_2", "regret_at_3"],
+        ascending=[True, False, False, True],
     )
 
 
@@ -1331,6 +1758,18 @@ def _choose_best_feature_set(summary: pd.DataFrame) -> str:
     val = val.sort_values(
         ["top3_hit", "regret_at_3", "top1_hit", "regret_at_1", "method"],
         ascending=[False, True, False, True, True],
+        kind="mergesort",
+    )
+    return str(val.iloc[0]["method"])
+
+
+def _choose_best_top3_feature_set(summary: pd.DataFrame) -> str:
+    val = summary[summary["split_name"] == "synthetic_val"].copy()
+    if val.empty:
+        return "handcrafted_all"
+    val = val.sort_values(
+        ["avg_top3_overlap", "top3_overlap_at_least_2", "oracle_in_top3", "regret_at_3", "method"],
+        ascending=[False, False, False, True, True],
         kind="mergesort",
     )
     return str(val.iloc[0]["method"])

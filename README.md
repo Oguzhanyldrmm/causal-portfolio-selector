@@ -1,149 +1,101 @@
 # Causal Portfolio Selector
 
-Standalone SATzilla-style algorithm portfolio selector for discrete causal discovery.
+Final 8-algorithm causal discovery portfolio selector for discrete Bayesian-network datasets.
 
-This repository is intentionally independent from the original
-`Causal-Algorithm-Selection` pipeline. The old pipeline is used only as a source
-of already-computed CSV/JSON artifacts; no Python modules are imported from it.
+The repository contains the code, configuration, tests, and compact reports. Large datasets, algorithm run records, and trained model binaries are kept outside Git in the final artifact export bundle.
 
-## V1 Scope
+## Final Setup
 
-- Uses existing benchmark outputs for 16 datasets and 6 algorithms.
-- Does not rerun the already-completed six causal discovery algorithms.
-- Provides a controlled runner for the three missing algorithms:
-  `MMHC`, `BOSS`, and `GRaSP`.
-- Trains a pre-run selector from dataset meta-features to a top-3 algorithm
-  recommendation.
-- Reports LODO and legacy split metrics.
+Algorithm portfolio:
 
-## Quick Start
+- PC_discrete
+- FCI
+- GES
+- HC
+- Tabu
+- K2
+- BOSS
+- GRaSP
 
-```bash
-causal-portfolio import-artifacts \
-  --source /home/oguzhan/Causal-Algorithm-Selection/runs/benchmark_runs_min_oct_no_pathfinder/20260427T215118Z
+Final training data:
 
-causal-portfolio --config configs/default.yaml train
-causal-portfolio --config configs/default.yaml evaluate
-causal-portfolio --config configs/default.yaml phase1-evidence
+- Synthetic BN complete set: 1753 datasets where all 8 algorithms succeeded.
+- Balanced synthetic training subset: 985 train datasets, with validation/test tables kept for evaluation.
+- Exact evaluation set: 14 held-out exact BN datasets.
 
-# Phase 2 learned structural fingerprints.
-uv run --with torch causal-portfolio --config configs/default.yaml train-fingerprint \
-  --synthetic-graph-count 1000 \
-  --epochs 50
-uv run --with torch causal-portfolio --config configs/default.yaml build-learned-features
-causal-portfolio --config configs/default.yaml phase2-evidence
+Final selectors:
 
-# Run only the three missing algorithms on imported datasets.
-# These classical implementations are CPU-bound; use hard timeouts.
-uv run --extra benchmark causal-portfolio --config configs/default.yaml run-missing-algorithms \
-  --algorithms MMHC,BOSS,GRaSP \
-  --timeout-seconds 120
+- `oracle4_overlap1_regret025`: top-3 combination reward regressor optimized for oracle coverage and low regret.
+- `overlap2_oracle1_regret010`: top-3 combination reward regressor optimized for ground-truth top-3 overlap.
+- `balanced_985_ranking`: retained baseline ranking selector.
 
-# Phase 3 timeout-aware nine-algorithm evaluation.
-causal-portfolio --config configs/default.yaml phase3-evidence
+## Artifact Bundle
 
-# Synthetic BN benchmark v1. Dataset generation is fast; algorithm runs are CPU-heavy.
-uv run causal-portfolio --config configs/default.yaml generate-synthetic-bn \
-  --output data/synthetic_bn/v1 \
-  --count 2000 \
-  --max-nodes 40 \
-  --seed 42
+Large local artifacts are not committed to Git. The final export bundle is:
 
-uv run --extra benchmark causal-portfolio --config configs/default.yaml run-synthetic-algorithms \
-  --synthetic-root data/synthetic_bn/v1 \
-  --output artifacts/synthetic_runs/v1 \
-  --algorithms PC_discrete,FCI,GES,HC,Tabu,K2,MMHC,BOSS,GRaSP \
-  --timeout-seconds 300 \
-  --resume
-
-# Recommended for the full 2000 dataset run: use 4 tmux shards.
-# If interrupted, rerun the same shard command; --resume skips existing JSON records.
-tmux new -s synthetic_algos_0
-cd /home/oguzhan/causal-portfolio-selector
-uv run --extra benchmark causal-portfolio --config configs/default.yaml run-synthetic-algorithms \
-  --synthetic-root data/synthetic_bn/v1 \
-  --output artifacts/synthetic_runs/v1 \
-  --timeout-seconds 300 \
-  --shard-index 0 \
-  --shard-count 4 \
-  --resume
-
-# Repeat in separate tmux sessions with --shard-index 1, 2, and 3.
-# Progress:
-find artifacts/synthetic_runs/v1/records -type f | wc -l
-
-causal-portfolio --config configs/default.yaml build-synthetic-training-tables \
-  --synthetic-root data/synthetic_bn/v1 \
-  --runs artifacts/synthetic_runs/v1 \
-  --output artifacts/synthetic_tables/v1
-
-uv run --with torch causal-portfolio --config configs/default.yaml train-fingerprint-from-synthetic \
-  --synthetic-root data/synthetic_bn/v1 \
-  --output artifacts/synthetic_models/v1/biaffine_encoder.pt \
-  --device cuda \
-  --epochs 100
-
-causal-portfolio --config configs/default.yaml train-synthetic-selector \
-  --tables artifacts/synthetic_tables/v1 \
-  --encoder artifacts/synthetic_models/v1/biaffine_encoder.pt \
-  --output artifacts/synthetic_models/v1/selector.joblib
-
-causal-portfolio --config configs/default.yaml evaluate-synthetic-selector-on-exact \
-  --model artifacts/synthetic_models/v1/selector.joblib \
-  --encoder artifacts/synthetic_models/v1/biaffine_encoder.pt \
-  --output reports/synthetic_v1
-
-causal-portfolio predict \
-  --dataset data/imported/datasets/asia.csv \
-  --model artifacts/models/selector.joblib
+```text
+/home/oguzhan_yildirim/causal_selection_final_export_20260508
 ```
 
-If the package is not installed, use:
+It contains:
 
-```bash
-python -m causal_portfolio_selector.cli <command>
+- final synthetic and exact evaluation datasets;
+- ground-truth graph files;
+- 8-algorithm synthetic and exact run outputs;
+- synthetic/evaluation training tables;
+- final model binaries;
+- checksums and export manifest.
+
+See `docs/final_artifacts_manifest.md` for the bundle layout and validation counts.
+
+## Repository Layout
+
+```text
+configs/     Default configuration.
+docs/        Final reports and artifact manifest.
+src/         Portfolio selector implementation and CLI.
+tests/       Unit tests.
 ```
 
-## Algorithm Pool
+Ignored local-only directories include `data/`, `artifacts/`, `experiments/`, and `logs/`.
 
-V1 is trained on the already-run six-algorithm pool:
+## Usage
 
-- `PC_discrete`
-- `FCI`
-- `GES`
-- `HC`
-- `Tabu`
-- `K2`
+Install dependencies:
 
-The missing-algorithm runner is restricted to:
+```bash
+uv sync --extra benchmark --extra learned --extra dev
+```
 
-- `MMHC`
-- `BOSS`
-- `GRaSP`
+Run tests:
 
-Its default output directory is:
+```bash
+uv run pytest
+```
 
-- `artifacts/missing_algorithm_runs/latest`
+Train a top-3 combination selector when the synthetic tables are restored locally:
 
-It writes one JSON record per dataset-algorithm run and a `summary.csv`.
-The command is resume-safe by default; existing records are skipped unless
-`--overwrite` is passed.
+```bash
+uv run causal-portfolio --config configs/default.yaml train-synthetic-top3-combination-selector \
+  --tables artifacts/synthetic_tables/v1_8alg_balanced_train_985 \
+  --output artifacts/synthetic_models/example/selector.joblib
+```
 
-## Outputs
+Evaluate a saved selector on exact evaluation tables:
 
-- `artifacts/tables/features.csv`
-- `artifacts/tables/targets.csv`
-- `artifacts/models/selector.joblib`
-- `reports/lodo_metrics.csv`
-- `reports/legacy_split_metrics.csv`
-- `reports/baseline_summary.csv`
-- `reports/ablation_summary.csv`
-- `reports/phase1_evidence.md`
-- `artifacts/learned/biaffine_encoder.pt`
-- `artifacts/tables/learned_features.csv`
-- `artifacts/tables/features_plus_learned.csv`
-- `reports/phase2_evidence.md`
-- `artifacts/missing_algorithm_runs/latest/summary.csv`
-- `artifacts/missing_algorithm_runs/latest/manifest.json`
-- `reports/predictions_by_dataset.csv`
-- `reports/summary.md`
+```bash
+uv run causal-portfolio --config configs/default.yaml evaluate-synthetic-selector-on-exact \
+  --model artifacts/synthetic_models/example/selector.joblib \
+  --output reports/example_eval
+```
+
+## Reports
+
+- `docs/Best_Models_Report.md`
+- `docs/Evaluation_report.md`
+- `docs/Synthetic_Generation_Groundtruth_Analysis.md`
+- `docs/final_artifacts_manifest.md`
+
+## Notes
+
+The final selectors use supervised reward regression over all 56 possible top-3 algorithm combinations. At inference time, the model scores each combination and returns the highest predicted-reward top-3 set.

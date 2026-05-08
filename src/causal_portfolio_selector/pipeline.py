@@ -19,6 +19,7 @@ from .learned.fingerprint import build_learned_feature_tables
 from .learned.model import train_biaffine_encoder
 from .learned.synthetic import generate_synthetic_examples
 from .features import extract_dataset_features
+from .knn_prior import KnnPriorOptions, build_knn_prior_tables
 from .missing import MissingRunOptions, run_missing_algorithm_suite
 from .models import load_selector, save_selector, train_selector
 from .phase3 import run_phase3_evidence
@@ -30,7 +31,10 @@ from .synthetic_benchmark import (
     generate_synthetic_bn_suite,
     run_synthetic_algorithm_suite,
     train_fingerprint_from_synthetic,
+    train_synthetic_score_selector,
     train_synthetic_selector,
+    train_synthetic_top3_combination_selector,
+    train_synthetic_top3_selector,
 )
 from .targets import (
     build_tables,
@@ -305,6 +309,25 @@ def run_build_synthetic_training_tables(
     )
 
 
+def run_build_knn_prior_features(
+    *,
+    tables: str | Path,
+    output: str | Path,
+    exact_tables: str | Path | None = None,
+    metadata_output: str | Path | None = None,
+    k: int = 50,
+) -> dict[str, Path]:
+    return build_knn_prior_tables(
+        KnnPriorOptions(
+            tables=Path(tables),
+            output=Path(output),
+            exact_tables=Path(exact_tables) if exact_tables is not None else None,
+            metadata_output=Path(metadata_output) if metadata_output is not None else None,
+            k=int(k),
+        )
+    )
+
+
 def run_train_fingerprint_from_synthetic(
     config: AppConfig,
     *,
@@ -334,6 +357,59 @@ def run_train_synthetic_selector(
         tables=tables,
         encoder=encoder,
         output=output,
+    )
+
+
+def run_train_synthetic_top3_selector(
+    config: AppConfig,
+    *,
+    tables: str | Path,
+    encoder: str | Path | None,
+    output: str | Path,
+) -> dict[str, Path]:
+    return train_synthetic_top3_selector(
+        config,
+        tables=tables,
+        encoder=encoder,
+        output=output,
+    )
+
+
+def run_train_synthetic_score_selector(
+    config: AppConfig,
+    *,
+    tables: str | Path,
+    encoder: str | Path | None,
+    output: str | Path,
+) -> dict[str, Path]:
+    return train_synthetic_score_selector(
+        config,
+        tables=tables,
+        encoder=encoder,
+        output=output,
+    )
+
+
+def run_train_synthetic_top3_combination_selector(
+    config: AppConfig,
+    *,
+    tables: str | Path,
+    encoder: str | Path | None,
+    output: str | Path,
+    oracle_weight: float = 3.0,
+    overlap_weight: float = 1.0,
+    overlap_at_least_2_weight: float = 0.0,
+    regret_weight: float = 0.25,
+) -> dict[str, Path]:
+    return train_synthetic_top3_combination_selector(
+        config,
+        tables=tables,
+        encoder=encoder,
+        output=output,
+        oracle_weight=float(oracle_weight),
+        overlap_weight=float(overlap_weight),
+        overlap_at_least_2_weight=float(overlap_at_least_2_weight),
+        regret_weight=float(regret_weight),
     )
 
 
